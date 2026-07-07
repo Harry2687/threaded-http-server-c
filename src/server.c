@@ -13,6 +13,44 @@
 #define PORT "8080"
 #define BACKLOG 10
 
+void handle_client(int client_fd) {
+    char buffer[2048];
+    memset(buffer, 0, sizeof buffer);
+
+    int bytes_recieved = recv(client_fd, buffer, sizeof(buffer) -1, 0);
+    if (bytes_recieved <= 0) {
+        if (bytes_recieved == -1) perror("recv failed");
+        close(client_fd);
+        return;
+    }
+
+    printf("Request recieved:\n%s\n", buffer);
+
+    char method[16];
+    char path[256];
+
+    int tokens_parsed = sscanf(buffer, "%15s %255s", method, path);
+    if (tokens_parsed < 2) {
+        fprintf(stderr, "Malformed HTTP request line\n");
+        close(client_fd);
+        return;
+    }
+
+    if (strcmp(method, "GET") != 0) {
+        char *bad_method_response = "HTTP/1.1 405 Method Not Allowed\r\nContent-Length: 0\r\n\r\n";
+        send(client_fd, bad_method_response, strlen(bad_method_response), 0);
+        close(client_fd);
+        return;
+    }
+
+    if (strcmp(path, "/") == 0) {
+        strcpy(path, "/index.html");
+    }
+
+    printf("Client requested file: %s\n", path);
+    close(client_fd);
+}
+
 int main(void) {
     int status;
     int server_fd, client_fd;
@@ -65,19 +103,7 @@ int main(void) {
 
         printf("Server: Got connection request!\n");
 
-        char buffer[1024];
-        memset(buffer, 0, sizeof buffer);
-
-        int bytes_received = recv(client_fd, buffer, sizeof(buffer) - 1, 0);
-        if (bytes_received > 0) {
-            printf("Received: %s\n", buffer);
-            
-            send(client_fd, buffer, bytes_received, 0);
-        } else if (bytes_received == -1) {
-            perror("recv failed");
-        }
-
-        close(client_fd);
+        handle_client(client_fd);
     }
 
     close(server_fd);
