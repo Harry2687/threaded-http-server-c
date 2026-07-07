@@ -48,7 +48,48 @@ void handle_client(int client_fd) {
     }
 
     printf("Client requested file: %s\n", path);
+    
+    char full_path[270];
+    snprintf(full_path, sizeof(full_path), ".%s", path);
+
+    FILE *file = fopen(full_path, "rb");
+    if (file == NULL) {
+        char *not_found_header = 
+            "HTTP/1.1 404 Not Found\r\n"
+            "Content-Type: text/html\r\n"
+            "Content-Length: 48\r\n"
+            "\r\n"
+            "<html><body><h1>404 File Not Found</h1></body></html>";
+
+        send(client_fd, not_found_header, strlen(not_found_header), 0);
+        close(client_fd);
+        return;
+    }
+
+    fseek(file, 0 , SEEK_END);
+    long file_size = ftell(file);
+    fseek(file, 0, SEEK_SET);
+
+    char header_buffer[512];
+    int header_len = snprintf(header_buffer, sizeof(header_buffer),
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Type: text/html\r\n"
+        "Content-Length: %ld\r\n"
+        "Connection: clse\r\n"
+        "\r\n",
+        file_size);
+
+    send(client_fd, header_buffer, header_len, 0);
+
+    char file_chunk[1024];
+    size_t bytes_read;
+    while ((bytes_read = fread(file_chunk, 1, sizeof(file_chunk), file)) > 0) {
+        send(client_fd, file_chunk, bytes_read, 0);
+    }
+
+    fclose(file);
     close(client_fd);
+    printf("Successfully served %s (%ld bytes) to client.\n", full_path, file_size);
 }
 
 int main(void) {
