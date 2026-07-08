@@ -9,9 +9,20 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netdb.h>
+#include <pthread.h>
 
 #define PORT "8080"
 #define BACKLOG 10
+#define THREAD_POOL_SIZE 4
+#define QUEUE_MAX_SIZE 20
+
+int work_queue[QUEUE_MAX_SIZE];
+int queue_count = 0;
+int queue_head = 0;
+int queue_tail = 0;
+
+pthread_mutex_t queue_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t queue_cond = PTHREAD_COND_INITIALIZER;
 
 void handle_client(int client_fd) {
     char buffer[2048];
@@ -92,6 +103,51 @@ void handle_client(int client_fd) {
     printf("Successfully served %s (%ld bytes) to client.\n", full_path, file_size);
 }
 
+void queue_push(int client_fd) {
+    pthread_mutex_lock(&queue_mutex);
+
+    if (queue_count >= QUEUE_MAX_SIZE) {
+        fprintf(stderr, "Work queue full! Dropping connection request.\n");
+        close(client_fd);
+        pthread_mutex_unlock(&queue_mutex);
+        return;
+    }
+
+    work_queue[queue_tail] = client_fd;
+    queue_tail = (queue_tail + 1) % QUEUE_MAX_SIZE;
+    queue_count++;
+
+    pthread_cond_signal(&queue_cond);
+
+    pthread_mutex_unlock(&queue_mutex);
+}
+
+int queue_pop(void) {
+    pthread_mutex_lock(&queue_mutex);
+
+    while (queue_count == 0) {
+        pthread_cond_wait(&queue_cond, &queue_mutex);
+    }
+
+    int client_fd = work_queue[queue_head];
+    queue_head = (queue_head + 1) % QUEUE_MAX_SIZE;
+    queue_count--;
+
+    pthread_mutex_unlock(&queue_mutex);
+    return client_fd;
+}
+
+void* worker_thread_cycle(void* arg) {
+    (void)arg;
+
+    while(1) {
+        int client_fd = queue_pop();
+        handle_client(client_fd);
+    }
+
+    return NULL;
+}
+
 int main(void) {
     int status;
     int server_fd, client_fd;
@@ -125,6 +181,14 @@ int main(void) {
 
     freeaddrinfo(res);
 
+    pthread_t thread_pool[THREAD_POOL_SIZE];
+    for (int i = 0; i < THREAD_POOL_SIZE; i++) {
+        if (pthread_create(&thread_pool[i], NULL, worker_thread_cycle, NULL) != 0) {
+            perror("Failed to create worker thread");
+            return 1;
+        }
+    }
+
     if (listen(server_fd, BACKLOG) == -1) {
         perror("listen failed");
         close(server_fd);
@@ -144,7 +208,7 @@ int main(void) {
 
         printf("Server: Got connection request!\n");
 
-        handle_client(client_fd);
+        queue_push(client_fd);
     }
 
     close(server_fd);

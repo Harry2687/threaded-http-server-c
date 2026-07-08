@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -Wall -Wextra -Werror -O2 -g
+CFLAGS = -Wall -Wextra -Werror -O2 -g -pthread
 
 TARGET = server
 SRC = src/server.c
